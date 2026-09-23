@@ -27,6 +27,10 @@ export const PlayerState = schema(
     speed: t.number().default(0),
     rebirth: t.number().default(0),
     wins: t.number().default(0),
+    // Total wall-clock seconds this account has spent in the game (client
+    // systems/playTime.js), for the "Most Time" in-world leaderboard. Same
+    // trust/persistence model as speed/rebirth/wins above.
+    timePlayed: t.number().default(0),
   },
   "PlayerState",
 );

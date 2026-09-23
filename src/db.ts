@@ -15,11 +15,12 @@ export interface PlayerDoc {
   // show -- RinkRoom.ts's PlayerState.username only exists for currently-
   // connected sessions.
   username?: string;
-  // The 3 stats client store/useGameStore.js tracks and the in-world
+  // The 4 stats client store/useGameStore.js tracks and the in-world
   // leaderboard ranks by (data/leaderboardBoard.js-equivalent transforms).
   speed: number;
   rebirth: number;
   wins: number;
+  timePlayed: number;
   // Rest of client store/useGameStore.js's durable, account-scoped state
   // (see hydrate()/resetProgress() there for the exact shape this mirrors).
   ownedHexPads: number[];
@@ -61,6 +62,7 @@ export async function connectDb(): Promise<void> {
       await players.createIndex({ speed: -1 });
       await players.createIndex({ rebirth: -1 });
       await players.createIndex({ wins: -1 });
+      await players.createIndex({ timePlayed: -1 });
     } catch (err) {
       console.warn("[db] failed to create leaderboard indexes:", err);
     }

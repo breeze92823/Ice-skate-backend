@@ -34,11 +34,10 @@ Then open http://localhost:2567 for the playground, or /monitor for the monitor.
 
 ## Wire protocol
 
-`Ice-Skate/src/systems/net.js` on the client is currently a stub (no server
-to connect to yet). This is the contract it should implement to talk to this
-room — every field name below matches `Ice-Skate/src/store/useGameStore.js`
-exactly, the same way `server-laser-escape`'s `ArenaRoom` mirrors its own
-client's `useGameStore.js`.
+`Ice-Skate/src/systems/net.js` implements this contract. Every field name
+below matches `Ice-Skate/src/store/useGameStore.js` exactly, the same way
+`server-laser-escape`'s `ArenaRoom` mirrors its own client's
+`useGameStore.js`.
 
 Join with `client.joinOrCreate("rink", { username, avatar, userId })`.
 `userId` is the stable Bloxity user id (`systems/bloxity.js`'s
@@ -51,19 +50,24 @@ persisted.
 |---|---|---|
 | `move` | `{ x, y, z, yaw, moveBlend }` | throttled, not per physics frame |
 | `setAvatar` | `{ avatar }` (JSON string, same shape `avatarState.js` builds) | on connect + whenever the portal reports the avatar changed |
-| `stats` | `{ speed, rebirth, wins }` | debounced on change |
-| `saveProgress` | `{ speed, rebirth, wins, ownedHexPads, equippedHexPad, ownedAuras, equippedAura, ownedTargets, moveSpeed, moveSpeedLevelBonus }` | debounced on change; no-ops for a guest (no `userId`) |
+| `stats` | `{ speed, rebirth, wins, timePlayed }` | debounced on change |
+| `saveProgress` | `{ speed, rebirth, wins, timePlayed, ownedHexPads, equippedHexPad, ownedAuras, equippedAura, ownedTargets, moveSpeed, moveSpeedLevelBonus }` | debounced on change; no-ops for a guest (no `userId`) |
 | `identify` | `{ username, userId }` | whenever sign-in state changes after join |
+
+`timePlayed` is total wall-clock seconds this account has spent in the game
+(client `systems/playTime.js`), buffered client-side and flushed roughly
+once a second — it's the stat `LeaderboardSign3` ("Most Time") ranks by.
 
 ### Server → client messages
 
 | Message | Payload | When |
 |---|---|---|
 | `progress` | full saved `PlayerDoc` (see `src/db.ts`) | once, right after a signed-in join/identify, if a saved doc exists |
-| `leaderboard` | `{ speed: Row[], rebirth: Row[], wins: Row[] }`, `Row = { id, name, value }` | every 15s, merging the live roster with all-time Mongo top scorers |
+| `leaderboard` | `{ speed: Row[], rebirth: Row[], wins: Row[], timePlayed: Row[] }`, `Row = { id, name, value }` | every 15s, merging the live roster with all-time Mongo top scorers |
 
 `RinkState.players` (keyed by `sessionId`) carries `username`, `x/y/z/yaw`,
-`moveBlend`, `avatar`, `speed`, `rebirth`, `wins` for every connected player.
+`moveBlend`, `avatar`, `speed`, `rebirth`, `wins`, `timePlayed` for every
+connected player.
 
 ## Environment
 

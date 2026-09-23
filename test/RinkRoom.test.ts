@@ -99,12 +99,13 @@ describe("testing your Colyseus app", () => {
 
     // Stats relay verbatim (clamped to >= 0), so client2 can rank client1 on
     // an in-world leaderboard.
-    client1.send("stats", { speed: 2480, rebirth: 3, wins: 17 });
+    client1.send("stats", { speed: 2480, rebirth: 3, wins: 17, timePlayed: 1234 });
     await room.waitForNextPatch();
     const p1StatsFromClient2 = client2.state.players.get(client1.sessionId);
     assert.strictEqual(p1StatsFromClient2.speed, 2480);
     assert.strictEqual(p1StatsFromClient2.rebirth, 3);
     assert.strictEqual(p1StatsFromClient2.wins, 17);
+    assert.strictEqual(p1StatsFromClient2.timePlayed, 1234);
 
     // A negative value (never legitimately sent by the client, but the room
     // trusts the wire otherwise) is clamped rather than relayed as-is.
@@ -125,6 +126,7 @@ describe("testing your Colyseus app", () => {
       speed: 42,
       rebirth: 1,
       wins: 7,
+      timePlayed: 3600,
       ownedHexPads: [0, 1],
       equippedHexPad: 1,
       ownedAuras: [],
@@ -195,7 +197,7 @@ describe("testing your Colyseus app", () => {
   // with a DIFFERENT account's all-time saved doc (offline right now).
   it("refreshLeaderboard merges an online session with a distinct offline Mongo doc", async () => {
     const fake = fakePlayersCollection([
-      { _id: "ghost", username: "Ghost", speed: 500, rebirth: 0, wins: 0, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
+      { _id: "ghost", username: "Ghost", speed: 500, rebirth: 0, wins: 0, timePlayed: 0, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
     ]);
     __setPlayersForTest(fake);
 
@@ -219,7 +221,7 @@ describe("testing your Colyseus app", () => {
   // alongside -- their own stale Mongo snapshot for the same account.
   it("refreshLeaderboard: an online logged-in player's live value suppresses their own stale Mongo doc", async () => {
     const fake = fakePlayersCollection([
-      { _id: "bloxity-dup", username: "Old", speed: 5, rebirth: 0, wins: 0, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
+      { _id: "bloxity-dup", username: "Old", speed: 5, rebirth: 0, wins: 0, timePlayed: 0, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
     ]);
     __setPlayersForTest(fake);
 
@@ -253,5 +255,32 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(payload.speed.length, 1);
     assert.strictEqual(payload.speed[0].name, "Solo");
     assert.strictEqual(payload.speed[0].value, 7);
+  });
+
+  // The "Most Time" board (client data/leaderboard.js's third LeaderboardSign
+  // instance) ranks by timePlayed exactly like speed/rebirth/wins -- same
+  // merge logic, just a fourth stat key.
+  it("refreshLeaderboard ranks by timePlayed for the Most Time board", async () => {
+    const fake = fakePlayersCollection([
+      { _id: "veteran", username: "Veteran", speed: 0, rebirth: 0, wins: 0, timePlayed: 36000, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
+    ]);
+    __setPlayersForTest(fake);
+
+    const room = await colyseus.createRoom<RinkState>("rink", {});
+    const client1 = await colyseus.connectTo(room, { username: "Newbie" });
+    client1.send("stats", { timePlayed: 120 });
+    await room.waitForNextPatch();
+
+    const leaderboardPromise = client1.waitForMessage("leaderboard");
+    await (room as any).refreshLeaderboard();
+    const payload = await leaderboardPromise;
+
+    const names = payload.timePlayed.map((row: any) => row.name);
+    assert.ok(names.includes("Veteran"));
+    assert.ok(names.includes("Newbie"));
+    assert.ok(
+      payload.timePlayed.findIndex((r: any) => r.name === "Veteran") <
+        payload.timePlayed.findIndex((r: any) => r.name === "Newbie"),
+    );
   });
 });

@@ -3,9 +3,9 @@ import { RinkState, PlayerState } from "./schema/RinkState.js";
 import { LEADERBOARD_REFRESH_MS, LEADERBOARD_QUERY_LIMIT } from "../constants.js";
 import { getPlayers, type PlayerDoc } from "../db.js";
 
-// The 3 stats client store/useGameStore.js tracks and an in-world
+// The 4 stats client store/useGameStore.js tracks and an in-world
 // leaderboard would rank by, one board per stat.
-const LEADERBOARD_STATS = ["speed", "rebirth", "wins"] as const;
+const LEADERBOARD_STATS = ["speed", "rebirth", "wins", "timePlayed"] as const;
 type LeaderboardStat = (typeof LEADERBOARD_STATS)[number];
 type LeaderboardRow = { id: string; name: string; value: number };
 type LeaderboardPayload = Record<LeaderboardStat, LeaderboardRow[]>;
@@ -33,7 +33,7 @@ function sanitizeProgress(raw: unknown): Partial<PlayerDoc> | null {
   const src = raw as Record<string, unknown>;
   const out: Partial<PlayerDoc> = {};
 
-  for (const key of ["speed", "rebirth", "wins", "moveSpeed", "moveSpeedLevelBonus"] as const) {
+  for (const key of ["speed", "rebirth", "wins", "timePlayed", "moveSpeed", "moveSpeedLevelBonus"] as const) {
     const v = src[key];
     if (typeof v === "number" && Number.isFinite(v)) out[key] = Math.max(0, v);
   }
@@ -96,11 +96,12 @@ export class RinkRoom extends Room<{ state: RinkState }> {
       if (avatar) p.avatar = avatar;
     },
     // The player's own live stats (client store/useGameStore.js speed/
-    // rebirth/wins), so an in-world leaderboard can rank currently-connected
-    // players. Sent debounced on change, not per frame -- same "human-speed
-    // event" cadence as setAvatar above. No validation beyond finite/
-    // non-negative, same trust model as every other message here.
-    stats: (client: Client, msg: { speed?: number; rebirth?: number; wins?: number }) => {
+    // rebirth/wins/timePlayed), so an in-world leaderboard can rank
+    // currently-connected players. Sent debounced on change, not per frame --
+    // same "human-speed event" cadence as setAvatar above. No validation
+    // beyond finite/non-negative, same trust model as every other message
+    // here.
+    stats: (client: Client, msg: { speed?: number; rebirth?: number; wins?: number; timePlayed?: number }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p) return;
       if (typeof msg?.speed === "number" && Number.isFinite(msg.speed)) {
@@ -111,6 +112,9 @@ export class RinkRoom extends Room<{ state: RinkState }> {
       }
       if (typeof msg?.wins === "number" && Number.isFinite(msg.wins)) {
         p.wins = Math.max(0, msg.wins);
+      }
+      if (typeof msg?.timePlayed === "number" && Number.isFinite(msg.timePlayed)) {
+        p.timePlayed = Math.max(0, msg.timePlayed);
       }
     },
     // Client's debounced push of the durable half of store/useGameStore.js
@@ -224,10 +228,12 @@ export class RinkRoom extends Room<{ state: RinkState }> {
       p.speed = doc.speed ?? 0;
       p.rebirth = doc.rebirth ?? 0;
       p.wins = doc.wins ?? 0;
+      p.timePlayed = doc.timePlayed ?? 0;
       client.send("progress", {
         speed: doc.speed ?? 0,
         rebirth: doc.rebirth ?? 0,
         wins: doc.wins ?? 0,
+        timePlayed: doc.timePlayed ?? 0,
         ownedHexPads: doc.ownedHexPads ?? [0],
         equippedHexPad: doc.equippedHexPad ?? 0,
         ownedAuras: doc.ownedAuras ?? [],
@@ -276,9 +282,9 @@ export class RinkRoom extends Room<{ state: RinkState }> {
   // A private, standalone method (rather than inlined in the onCreate timer)
   // so tests can call and await it directly without waiting on the interval.
   private async refreshLeaderboard() {
-    // One pass over the live roster, reused for all 3 stats below, rather
+    // One pass over the live roster, reused for all 4 stats below, rather
     // than re-walking this.state.players per stat.
-    const onlineRows: { sessionId: string; userId: string | null; username: string; speed: number; rebirth: number; wins: number }[] = [];
+    const onlineRows: { sessionId: string; userId: string | null; username: string; speed: number; rebirth: number; wins: number; timePlayed: number }[] = [];
     const onlineUserIds = new Set<string>();
     this.state.players.forEach((p, sessionId) => {
       const userId = this.userIds.get(sessionId) ?? null;
@@ -290,11 +296,12 @@ export class RinkRoom extends Room<{ state: RinkState }> {
         speed: p.speed,
         rebirth: p.rebirth,
         wins: p.wins,
+        timePlayed: p.timePlayed,
       });
     });
 
     const players = getPlayers();
-    const payload = { speed: [], rebirth: [], wins: [] } as LeaderboardPayload;
+    const payload = { speed: [], rebirth: [], wins: [], timePlayed: [] } as LeaderboardPayload;
 
     for (const stat of LEADERBOARD_STATS) {
       // Online rows first: a currently-connected player's live value is
