@@ -13,9 +13,13 @@ export const PlayerState = schema(
     moveBlend: t.number().default(0),
     // The player's Bloxity avatar, so remote clients render the real character
     // (equipped cosmetics + proportions) instead of the capsule fallback. A
-    // JSON string: {"e": <equipped ids object>, "p": <proportions object>}.
-    // Client-reported, never validated -- same trust model as `username`;
-    // only length-capped (see RinkRoom.ts AVATAR_MAX_LEN).
+    // JSON string: {"e": <equipped ids object>, "p": <proportions object>,
+    // "sk": <equipped SkateRack tier index>}. `sk` rides along here rather
+    // than getting its own field since it's a cosmetic that only matters
+    // bundled with a rig rebuild, same cadence as `e`/`p`. Client-reported,
+    // never validated -- same trust model as `username`; only length-capped
+    // (see RinkRoom.ts AVATAR_MAX_LEN). Opaque to the server either way: it's
+    // stored and relayed as-is, never parsed here.
     avatar: t.string().default(""),
     // Live client-reported gameplay stats (client store/useGameStore.js
     // speed/rebirth/wins), so an in-world leaderboard can rank currently-
