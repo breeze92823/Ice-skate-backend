@@ -390,8 +390,31 @@ export class RinkRoom extends Room<{ state: RinkState }> {
         }
       }
 
-      merged.sort((a, b) => b.value - a.value);
-      payload[stat] = merged.slice(0, LEADERBOARD_QUERY_LIMIT);
+      // Collapse rows sharing a display name down to one. userId-based
+      // dedup above only catches a duplicate when both rows agree on the
+      // SAME id; it can't catch the case that actually kept recurring in
+      // production -- the same Bloxity account resolving to a DIFFERENT id
+      // across sessions (see setUserId's identity-diagnostic log), which
+      // leaves an orphaned Mongo doc under the old id sitting alongside a
+      // fresh one under the new id, both saved with the same username. Keep
+      // the higher value (this account's true best-known score, wherever
+      // it's actually stored) but prefer an online row's id so the client
+      // can still recognise its own row via selfId.
+      const byName = new Map<string, LeaderboardRow>();
+      for (const row of merged) {
+        const key = row.name || "Player";
+        const existing = byName.get(key);
+        if (!existing) {
+          byName.set(key, row);
+          continue;
+        }
+        const preferId = existing.id.startsWith("offline:") && !row.id.startsWith("offline:") ? row.id : existing.id;
+        byName.set(key, { id: preferId, name: key, value: Math.max(existing.value, row.value) });
+      }
+      const deduped = [...byName.values()];
+
+      deduped.sort((a, b) => b.value - a.value);
+      payload[stat] = deduped.slice(0, LEADERBOARD_QUERY_LIMIT);
     }
 
     this.broadcast("leaderboard", payload);

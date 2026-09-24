@@ -268,6 +268,32 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(rowsForAccount[0].value, 999, "the live value wins over the stale Mongo snapshot");
   });
 
+  // The bug reported in production: the SAME account resolves to a
+  // different Bloxity id across two logins (an id-instability issue outside
+  // this repo -- see setUserId's diagnostic log), leaving an orphaned Mongo
+  // doc under the OLD id saved with the same username as the fresh session
+  // under the NEW id. userId-based dedup can't catch this since the ids
+  // genuinely differ; only the shared display name ties them together.
+  it("refreshLeaderboard collapses an online session and an offline doc that share a username but not an id", async () => {
+    const fake = fakePlayersCollection([
+      { _id: "old-id", username: "breeze393904", speed: 0, rebirth: 0, wins: 0, timePlayed: 1970, ownedHexPads: [0], equippedHexPad: 0, ownedAuras: [], equippedAura: null, ownedTargets: [], moveSpeed: 0, moveSpeedLevelBonus: 0, version: 1, updatedAt: new Date() },
+    ]);
+    __setPlayersForTest(fake);
+
+    const room = await colyseus.createRoom<RinkState>("rink", {});
+    const client1 = await colyseus.connectTo(room, { username: "breeze393904", userId: "new-id" });
+    client1.send("stats", { timePlayed: 66 });
+    await room.waitForNextPatch();
+
+    const leaderboardPromise = client1.waitForMessage("leaderboard");
+    await (room as any).refreshLeaderboard();
+    const payload = await leaderboardPromise;
+
+    const rowsForName = payload.timePlayed.filter((r: any) => r.name === "breeze393904");
+    assert.strictEqual(rowsForName.length, 1, "exactly one row for this display name, not one per Mongo id");
+    assert.strictEqual(rowsForName[0].value, 1970, "the higher known value survives, wherever it's actually stored");
+  });
+
   // Mongo unreachable (this file's default test env -- no MONGODB_URI) must
   // still broadcast, just with online-only rows, same degrade-to-no-op
   // posture as every other Mongo path in RinkRoom.
