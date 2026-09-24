@@ -9,6 +9,26 @@ const LEADERBOARD_STATS = ["speed", "rebirth", "wins", "timePlayed"] as const;
 type LeaderboardStat = (typeof LEADERBOARD_STATS)[number];
 type LeaderboardRow = { id: string; name: string; value: number };
 type LeaderboardPayload = Record<LeaderboardStat, LeaderboardRow[]>;
+type OnlineRow = { sessionId: string; userId: string | null; username: string; speed: number; rebirth: number; wins: number; timePlayed: number };
+
+// Defense-in-depth alongside RinkRoom.setUserId()'s eviction of a superseded
+// session: collapse any online rows that still share a userId (e.g. a
+// leave/join racing the same tick) down to one, keeping the higher value for
+// whichever stat is being ranked. Anonymous (guest) rows have no id to key
+// on and are never collapsed against each other.
+function dedupeOnline(rows: OnlineRow[], stat: LeaderboardStat): OnlineRow[] {
+  const byUserId = new Map<string, OnlineRow>();
+  const anonymous: OnlineRow[] = [];
+  for (const row of rows) {
+    if (!row.userId) {
+      anonymous.push(row);
+      continue;
+    }
+    const existing = byUserId.get(row.userId);
+    if (!existing || row[stat] > existing[stat]) byUserId.set(row.userId, row);
+  }
+  return [...byUserId.values(), ...anonymous];
+}
 
 // Cap on the JSON avatar blob (see RinkState.ts PlayerState.avatar). A full
 // equipped set + 7 proportions serialises to a few hundred bytes; 4 KB is
@@ -202,7 +222,34 @@ export class RinkRoom extends Room<{ state: RinkState }> {
     const prev = this.userIds.get(client.sessionId) || "";
     if (userId === prev) return; // no change -- e.g. a username-only identify
 
+    // Diagnostic for the leaderboard-duplicate/lost-progress investigation:
+    // if the same real account ever shows up under two different ids, this
+    // is the only place that fact would be visible.
+    console.log(
+      `[RinkRoom] identity: session=${client.sessionId} userId="${prev}"->"${userId}" username="${p.username}"`,
+    );
+
     if (userId) {
+      // Evict any OTHER live session already claiming this account. Two
+      // sessions sharing one userId is exactly how the same account ends up
+      // with two leaderboard rows (refreshLeaderboard() below) and two
+      // racing Mongo writers -- a hard refresh/crash leaves the old session
+      // alive for up to 20s via allowReconnection (onLeave below), and a
+      // genuinely new join in that window must supersede it outright rather
+      // than coexist.
+      for (const [sid, uid] of this.userIds) {
+        if (sid === client.sessionId || uid !== userId) continue;
+        this.state.players.delete(sid);
+        this.userIds.delete(sid);
+        const stale = this.clients.find((c) => c.sessionId === sid);
+        if (stale) {
+          try {
+            stale.leave(CloseCode.CONSENTED);
+          } catch {
+            // Already gone -- nothing to clean up.
+          }
+        }
+      }
       this.userIds.set(client.sessionId, userId);
       this.loadProgress(client, userId, p);
     } else {
@@ -284,7 +331,7 @@ export class RinkRoom extends Room<{ state: RinkState }> {
   private async refreshLeaderboard() {
     // One pass over the live roster, reused for all 4 stats below, rather
     // than re-walking this.state.players per stat.
-    const onlineRows: { sessionId: string; userId: string | null; username: string; speed: number; rebirth: number; wins: number; timePlayed: number }[] = [];
+    const onlineRows: OnlineRow[] = [];
     const onlineUserIds = new Set<string>();
     this.state.players.forEach((p, sessionId) => {
       const userId = this.userIds.get(sessionId) ?? null;
@@ -307,7 +354,7 @@ export class RinkRoom extends Room<{ state: RinkState }> {
       // Online rows first: a currently-connected player's live value is
       // always more current than whatever their last debounced saveProgress
       // wrote to Mongo, whether they're signed in or just a guest.
-      const merged: LeaderboardRow[] = onlineRows.map((row) => ({
+      const merged: LeaderboardRow[] = dedupeOnline(onlineRows, stat).map((row) => ({
         id: row.sessionId,
         name: row.username,
         value: row[stat],

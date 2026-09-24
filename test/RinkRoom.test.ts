@@ -172,6 +172,35 @@ describe("testing your Colyseus app", () => {
     assert.strictEqual(client1.state.players.get(client1.sessionId).username, "Epic86");
   });
 
+  // The bug this section guards against: a hard refresh/crash lets a
+  // genuinely new session join under the same account while onLeave's
+  // allowReconnection(20s) is still keeping the old session's PlayerState
+  // alive -- without eviction, refreshLeaderboard() would show the same
+  // account twice (the reported "breeze393904" duplicate with two very
+  // different values).
+  it("setUserId evicts a stale session that already claims the same userId", async () => {
+    const room = await colyseus.createRoom<RinkState>("rink", {});
+    const client1 = await colyseus.connectTo(room, { username: "Old", userId: "shared-id" });
+    const oldSessionId = client1.sessionId;
+    assert.strictEqual(room.userIds.get(oldSessionId), "shared-id");
+
+    // A second, genuinely new session claims the same account -- e.g. the
+    // real player reconnecting after a hard refresh while the old socket is
+    // still in its reconnection grace window.
+    const client2 = await colyseus.connectTo(room, { username: "New", userId: "shared-id" });
+    await room.waitForNextPatch();
+
+    assert.strictEqual(room.userIds.has(oldSessionId), false, "old session's mapping must be evicted");
+    assert.strictEqual(room.state.players.has(oldSessionId), false, "old session's PlayerState must be removed");
+    assert.strictEqual(room.userIds.get(client2.sessionId), "shared-id");
+
+    const leaderboardPromise = client2.waitForMessage("leaderboard");
+    await (room as any).refreshLeaderboard();
+    const payload = await leaderboardPromise;
+    const rowsForAccount = payload.speed.filter((r: any) => r.name === "Old" || r.name === "New");
+    assert.strictEqual(rowsForAccount.length, 1, "exactly one row for this account, not one per stale session");
+  });
+
   // Feature: the in-world leaderboards must show every account that has EVER
   // saved to Mongo, not just who's connected right now. This is the
   // Mongo-write half of that: saveProgress must persist the player's CURRENT
