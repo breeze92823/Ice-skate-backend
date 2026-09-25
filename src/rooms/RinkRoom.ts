@@ -208,6 +208,11 @@ export class RinkRoom extends Room<{ state: RinkState }> {
     this.state.players.set(client.sessionId, p);
 
     this.setUserId(client, p, options?.userId ?? "");
+    // A guest join never changes this.userIds (setUserId's own early return
+    // skips its refresh call in that case), but the roster still just
+    // changed -- same "don't wait up to 15s" reasoning as setUserId's own
+    // trigger.
+    void this.refreshLeaderboard();
   }
 
   // Bloxity user id (client systems/bloxity.js getStableUserId()) --
@@ -258,6 +263,13 @@ export class RinkRoom extends Room<{ state: RinkState }> {
       // nothing made while signed in is lost.
       this.userIds.delete(client.sessionId);
     }
+
+    // Don't leave the broadcast leaderboard showing a stale/duplicate row
+    // for up to LEADERBOARD_REFRESH_MS (15s) after an eviction or a fresh
+    // sign-in -- the periodic timer in onCreate() would otherwise be the only
+    // thing that ever corrects it, and a player who refreshes and checks the
+    // board immediately can catch it mid-window.
+    void this.refreshLeaderboard();
   }
 
   // Seeds this player's own leaderboard row immediately (rather than waiting
